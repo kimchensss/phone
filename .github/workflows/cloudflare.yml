@@ -1,7 +1,7 @@
 # 핸드폰 엿보기 → Cloudflare Pages 자동 배포
 # main 에 올라온 폴더(영문 소문자·숫자·- 이름, 안에 index.html)를 같은 이름의 Cloudflare Pages 프로젝트로 올려
 #   폴더 robin/  →  https://robin.pages.dev  (이름이 이미 쓰이고 있으면 Cloudflare가 뒤에 글자를 붙임)
-# 실제 주소는 links.json 에 기록된다.
+# 실제 주소는 links.json 에 기록된다. 폴더를 지우면(그리고 links.json 에 기록돼 있으면) Cloudflare 프로젝트도 지운다.
 # 필요한 저장소 비밀값(Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN  (권한: Account · Cloudflare Pages · Edit)
 #   CLOUDFLARE_ACCOUNT_ID
@@ -32,12 +32,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 올릴 폴더 찾기
+      - name: 올릴 폴더 · 내린 폴더 찾기
         env:
           INPUT_FOLDER: ${{ github.event.inputs.folder }}
           BEFORE: ${{ github.event.before }}
         run: |
-          : > /tmp/folders
+          : > /tmp/folders; : > /tmp/removed
           if [ -n "$INPUT_FOLDER" ]; then
             echo "$INPUT_FOLDER" > /tmp/all
           else
@@ -47,23 +47,39 @@ jobs:
             git diff --name-only "$BEFORE" HEAD | awk -F/ 'NF>1{print $1}' | sort -u > /tmp/all
           fi
           while read -r d; do
-            if [[ "$d" =~ ^[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?$ ]] && [ -f "$d/index.html" ]; then echo "$d" >> /tmp/folders; fi
+            [[ "$d" =~ ^[a-z0-9]([a-z0-9-]{0,48}[a-z0-9])?$ ]] || continue
+            if [ -f "$d/index.html" ]; then echo "$d" >> /tmp/folders
+            elif [ ! -e "$d" ]; then echo "$d" >> /tmp/removed; fi
           done < /tmp/all
           echo "올릴 폴더:"; cat /tmp/folders
+          echo "내린 폴더:"; cat /tmp/removed
 
-      - name: Cloudflare Pages에 올리기
+      - name: Cloudflare Pages에 올리기 · 내리기
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if [ ! -s /tmp/folders ]; then echo "올릴 폴더 없음"; exit 0; fi
+          if [ ! -s /tmp/folders ] && [ ! -s /tmp/removed ]; then echo "할 일 없음"; exit 0; fi
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::저장소 비밀값 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID 가 없어요"; exit 1
           fi
           API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects"
           AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
           [ -f links.json ] || echo '{}' > links.json
+          # 내리기: links.json 에 기록된(우리가 만든) 프로젝트만 지운다
           while read -r d; do
+            [ -n "$d" ] || continue
+            if [ "$(jq -r --arg k "$d" 'has($k)' links.json)" != "true" ]; then echo "건너뜀(기록 없음): $d"; continue; fi
+            if curl -fsS -X DELETE -H "$AUTH" "$API/$d" > /dev/null; then
+              echo "🗑 $d 내림" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::$d Cloudflare 프로젝트를 지우지 못했어요 (이미 없거나 배포 기록이 너무 많음)"
+            fi
+            jq --arg k "$d" 'del(.[$k])' links.json > /tmp/links && mv /tmp/links links.json
+          done < /tmp/removed
+          # 올리기
+          while read -r d; do
+            [ -n "$d" ] || continue
             size=$(stat -c %s "$d/index.html")
             if [ "$size" -gt 26214400 ]; then
               echo "::error::$d/index.html 이 25MB를 넘어 Cloudflare에 올릴 수 없어요 ($size bytes)"; exit 1
