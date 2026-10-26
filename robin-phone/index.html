@@ -1514,8 +1514,14 @@ const avatar = (name, size, cls = "") => photoOf(name) ? `<div class="avatar ${c
 const PW = 426, PH = 898;
 function fit() {
   const st = $("#stage"); const cs = getComputedStyle(st);
-  const availW = st.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const availH = window.innerHeight - (D.page.caption ? 18 + 10 : 0) - 18 - 36 - 44;
+  const vv = window.visualViewport;
+  const vh = Math.min(window.innerHeight, document.documentElement.clientHeight || 1e9, vv ? vv.height : 1e9);
+  const vw = Math.min(st.clientWidth, document.documentElement.clientWidth || 1e9);
+  const small = vw < 600;                                  /* 폰 화면: 가장자리에 여백을 둠 */
+  const sideGap = small ? 22 : 0;
+  const vertGap = small ? 36 : 0;
+  const availW = vw - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - sideGap * 2;
+  const availH = vh - (D.page.caption ? 18 + 10 : 0) - 18 - 36 - 44 - vertGap;
   const s = Math.max(.3, Math.min(availW / PW, availH / PH, 1.2));
   S.scale = s;
   $("#phone").style.transform = `scale(${s})`;
@@ -3057,7 +3063,9 @@ function init() {
   const L = ["", "ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ"];
   $("#keys").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button class="key" data-k="${n}" aria-label="${n}"><b>${n}</b><small>${L[n - 1]}</small></button>`).join("") + `<span class="key blank"></span><button class="key" data-k="0" aria-label="0"><b>0</b><small></small></button><span class="key blank"></span>`;
   $("#dots").innerHTML = "<i></i><i></i><i></i><i></i>";
-  fit(); window.addEventListener("resize", fit);
+  fit(); window.addEventListener("resize", fit); window.addEventListener("orientationchange", () => setTimeout(fit, 250));
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
+  setTimeout(fit, 300);
   setPower("off"); $("#vOff").classList.add("hint");
   // 사진 미리 불러오기
   Object.keys(typeof IMAGES !== "undefined" ? IMAGES : {}).forEach(k => { const i = new Image(); i.src = IMAGES[k]; });
